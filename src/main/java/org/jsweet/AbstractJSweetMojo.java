@@ -15,8 +15,6 @@ import org.apache.commons.lang3.ArrayUtils;
 import org.apache.log4j.Level;
 import org.apache.log4j.LogManager;
 import org.apache.maven.artifact.Artifact;
-import org.apache.maven.artifact.factory.ArtifactFactory;
-import org.apache.maven.artifact.metadata.ArtifactMetadataSource;
 import org.apache.maven.artifact.repository.ArtifactRepository;
 import org.apache.maven.artifact.resolver.ArtifactNotFoundException;
 import org.apache.maven.artifact.resolver.ArtifactResolutionException;
@@ -60,6 +58,9 @@ public abstract class AbstractJSweetMojo extends AbstractMojo {
 	protected String tsOut;
 
 	@Parameter(required = false)
+	protected Boolean tsserver;
+
+	@Parameter(required = false)
 	protected Boolean bundle;
 
 	@Parameter(required = false)
@@ -79,6 +80,9 @@ public abstract class AbstractJSweetMojo extends AbstractMojo {
 
 	@Parameter(required = false)
 	protected Boolean verbose;
+
+	@Parameter(required = false)
+	protected Boolean veryVerbose;
 
 	@Parameter(required = false)
 	protected Boolean ignoreDefinitions;
@@ -132,13 +136,8 @@ public abstract class AbstractJSweetMojo extends AbstractMojo {
 	protected File workingDir;
 
 	@Component
-	protected ArtifactFactory artifactFactory;
-
-	@Component
 	protected ArtifactResolver resolver;
 
-	@Component
-	protected ArtifactMetadataSource metadataSource;
 	/**
 	 * The plugin descriptor
 	 * 
@@ -148,12 +147,11 @@ public abstract class AbstractJSweetMojo extends AbstractMojo {
 	private PluginDescriptor descriptor;
 
 	private void logInfo(String content) {
-		if (verbose != null && verbose) {
+		if (verbose != null && verbose || veryVerbose != null && veryVerbose) {
 			getLog().info(content);
 		}
 	}
 
-	@SuppressWarnings("unchecked")
 	protected SourceFile[] collectSourceFiles(MavenProject project) {
 
 		logInfo("source includes: " + ArrayUtils.toString(includes));
@@ -222,6 +220,7 @@ public abstract class AbstractJSweetMojo extends AbstractMojo {
 			logInfo("bundle: " + bundle);
 			logInfo("tsOut: " + tsOutputDir);
 			logInfo("tsOnly: " + tsOnly);
+			logInfo("tsserver: " + tsserver);
 			logInfo("declarations: " + declaration);
 			logInfo("ignoreDefinitions: " + ignoreDefinitions);
 			logInfo("declarationOutDir: " + declarationOutDir);
@@ -231,6 +230,7 @@ public abstract class AbstractJSweetMojo extends AbstractMojo {
 			logInfo("sourceMap: " + sourceMap);
 			logInfo("sourceRoot: " + sourceRoot);
 			logInfo("verbose: " + verbose);
+			logInfo("veryVerbose: " + veryVerbose);
 			logInfo("jdkHome: " + jdkHome);
 			logInfo("factoryClassName: " + factoryClassName);
 
@@ -241,7 +241,12 @@ public abstract class AbstractJSweetMojo extends AbstractMojo {
 				ProcessUtil.addExtraPath(extraSystemPath);
 			}
 
+			LogManager.getLogger("org.jsweet").setLevel(Level.WARN);
+
 			if (verbose != null && verbose) {
+				LogManager.getLogger("org.jsweet").setLevel(Level.DEBUG);
+			}
+			if (veryVerbose != null && veryVerbose) {
 				LogManager.getLogger("org.jsweet").setLevel(Level.ALL);
 			}
 
@@ -249,34 +254,25 @@ public abstract class AbstractJSweetMojo extends AbstractMojo {
 
 			if (factoryClassName != null) {
 				ClassRealm realm = descriptor.getClassRealm();
-				List runtimeClasspathElements = project.getRuntimeClasspathElements();
 
-				for (int i = 0; i < runtimeClasspathElements.size(); i++)
-				{
-					String element = (String) runtimeClasspathElements.get(i);
+				List<String> runtimeClasspathElements = project.getRuntimeClasspathElements();
 
+				for (String element : runtimeClasspathElements) {
 					File elementFile = new File(element);
 					realm.addURL(elementFile.toURI().toURL());
 				}
 
-				try
-				{
+				try {
 					Class<?> c = realm.loadClass(factoryClassName);
 					factory = (JSweetFactory) c.newInstance();
 
-				}
-				catch (Exception e)
-				{
-					try
-					{
+				} catch (Exception e) {
+					try {
 						// try forName just in case
 						factory = (JSweetFactory) Class.forName(factoryClassName).newInstance();
-					}
-					catch (Exception e2)
-					{
-						throw new MojoExecutionException(
-								"cannot find or instantiate factory class: " + factoryClassName
-										+ " (make sure the class is in the plugin's classpath and that it defines an empty public constructor)",
+					} catch (Exception e2) {
+						throw new MojoExecutionException("cannot find or instantiate factory class: " + factoryClassName
+								+ " (make sure the class is in the plugin's classpath and that it defines an empty public constructor)",
 								e2);
 					}
 				}
@@ -301,6 +297,9 @@ public abstract class AbstractJSweetMojo extends AbstractMojo {
 			}
 			if (bundle != null) {
 				transpiler.setBundle(bundle);
+			}
+			if (tsserver != null) {
+				transpiler.setUseTsserver(tsserver);
 			}
 			if (sourceMap != null) {
 				transpiler.setGenerateSourceMaps(sourceMap);
@@ -414,7 +413,6 @@ public abstract class AbstractJSweetMojo extends AbstractMojo {
 
 		MavenProject project = getMavenProject();
 
-		@SuppressWarnings("unchecked")
 		List<Dependency> dependencies = project.getDependencies();
 		logInfo("dependencies=" + dependencies);
 
@@ -425,12 +423,17 @@ public abstract class AbstractJSweetMojo extends AbstractMojo {
 				getLog().warn("dependency type not-jar excluded from candies detection: " + dependency);
 				continue;
 			}
-			Artifact mavenArtifact = artifactFactory.createArtifact(dependency.getGroupId(), dependency.getArtifactId(),
-					dependency.getVersion(), Artifact.SCOPE_COMPILE, "jar");
 
-			logInfo("candies detection: add project dependency " + dependency + " => " + mavenArtifact);
+			@SuppressWarnings("deprecation")
+			Artifact dependencyArtifact = project.getDependencyArtifacts().stream()
+					.filter(artifact -> artifact.getGroupId().equals(dependency.getGroupId())
+							&& artifact.getArtifactId().equals(dependency.getArtifactId())
+							&& artifact.getVersion().equals(dependency.getVersion()))
+					.findFirst().get();
 
-			directDependencies.add(mavenArtifact);
+			logInfo("candies detection: add project dependency " + dependency + " => " + dependencyArtifact);
+
+			directDependencies.add(dependencyArtifact);
 		}
 
 		// lookup for transitive dependencies
@@ -439,9 +442,8 @@ public abstract class AbstractJSweetMojo extends AbstractMojo {
 				project.getArtifact(), //
 				remoteRepositories, //
 				localRepository, //
-				metadataSource);
+				null);
 
-		@SuppressWarnings("unchecked")
 		Set<ResolutionNode> allDependenciesArtifacts = dependenciesResolutionResult.getArtifactResolutionNodes();
 		logInfo("all candies artifacts: " + allDependenciesArtifacts);
 
