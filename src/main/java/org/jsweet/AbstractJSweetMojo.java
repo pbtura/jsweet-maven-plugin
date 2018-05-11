@@ -197,8 +197,7 @@ public abstract class AbstractJSweetMojo extends AbstractMojo {
 		}
 	}
 
-	protected JSweetTranspiler createJSweetTranspiler(MavenProject project) throws MojoExecutionException
-	{
+	protected JSweetTranspiler createJSweetTranspiler(MavenProject project) throws MojoExecutionException {
 
 		try {
 
